@@ -3,6 +3,13 @@
 Copyright (c) 2014-2018 The Monero Project.   
 Portions Copyright (c) 2012-2013 The Cryptonote developers.
 
+## Multi Color Experiments
+
+This fork was created by the Institute for Distributed Systems at Ulm University. It is used to test preliminary versions of an extension, allowing to have color aware tokens.
+Transactions are based on RCTfull and allow transfer of multiple colored inputs to multiple outputs with public verifiable proofs of amount conservation.
+
+Use at you own risk! The cryptographic code is NOT reviewed.
+
 ## Development resources
 
 - Web: [getmonero.org](https://getmonero.org)
