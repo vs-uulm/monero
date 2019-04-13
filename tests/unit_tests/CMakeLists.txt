@@ -67,6 +67,7 @@ set(unit_tests_sources
   uri.cpp
   varint.cpp
   ringct.cpp
+  mcringct.cpp
   output_selection.cpp
   vercmp.cpp)
 
@@ -79,6 +80,7 @@ add_executable(unit_tests
 target_link_libraries(unit_tests
   PRIVATE
     ringct
+    mcringct
     cryptonote_protocol
     cryptonote_core
     blockchain_db
