@@ -132,7 +132,15 @@ TEST(mcringct, mcctskpkGen) {
     key color = pkGen();
 
     mcctkey sk_in, pk_in;
+
     tie(sk_in, pk_in) = mcctskpkGen(amount, color);
+    auto time_before = std::chrono::high_resolution_clock::now();
+    for(int i=1000; i<2000; i++) {
+        auto bla = ctskpkGen(i);
+    }
+    auto time_after = std::chrono::high_resolution_clock::now();
+    std::cerr << "mcrct::mcctskpkGen " << std::chrono::duration_cast<std::chrono::microseconds>(time_after-time_before).count() << " micros" << std::endl;
+
 
     mcctkey sk_out, pk_out;
     tie(sk_out, pk_out) = mcctskpkGen(amount, color);
