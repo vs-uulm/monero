@@ -60,6 +60,7 @@ set(unit_tests_sources
   long_term_block_weight.cpp
   lmdb.cpp
   main.cpp
+  mcringct_simple.cpp
   memwipe.cpp
   mlocker.cpp
   mnemonics.cpp
@@ -104,6 +105,7 @@ add_executable(unit_tests
 target_link_libraries(unit_tests
   PRIVATE
     ringct
+    mcringct
     cryptonote_protocol
     cryptonote_core
     daemon_messages
