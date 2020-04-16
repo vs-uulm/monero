@@ -55,6 +55,9 @@ namespace mcrct {
             key txnFeeKey
             );
 
+    equalSig proveEqual(mcctkey fromPk, ctkey toPk, xmr_amount amount, ctkey fromSk, ctkey toSk);
+    bool verifyEqual(equalSig s, mcctkey fromPk, ctkey toPk);
+
     mcrctSig genMCRctSimple(const key &message,
                             const mcctkeyV &inSk,
                             const mcctkeyV &inPk,

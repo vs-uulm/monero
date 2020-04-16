@@ -40,9 +40,16 @@ namespace mcrct {
         key c1;
     };
 
+    struct equalSig {
+        key Fpk, Tpk;
+        key zv, zf, zt;
+    };
+
     struct mcrctSigPrunable : rctSigPrunable {
         std::vector<std::pair<key, key>> colorsOutEqual;
         struct colorSig colorSig;
+        ctkeyV normPk;
+        std::vector<equalSig> equalSigs;
         //TODO: borromean output color range
     };
 

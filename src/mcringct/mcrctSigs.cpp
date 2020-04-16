@@ -195,6 +195,71 @@ namespace mcrct {
         return equalKeys(connector, bb.c1);
     }
 
+    equalSig proveEqual(mcctkey fromPk, ctkey toPk, xmr_amount amount, ctkey fromSk, ctkey toSk){
+        equalSig s;
+
+        ctkey randFromSk, randFromPk;
+        ctkey randToSk, randToPk;
+
+        key randamount = skGen();
+        key am = d2h(amount);
+
+        skpkGen(randFromSk.mask, randFromPk.mask);
+        skpkGen(randToSk.mask, randToPk.mask);
+
+        key vrFrom = scalarmultKey(fromPk.color, randamount);
+        key vrTo = scalarmultH(randamount);
+
+        addKeys(s.Fpk, randFromPk.mask, vrFrom);
+        addKeys(s.Tpk, randToPk.mask, vrTo);
+
+        // create non-interactive challenge by creating a hash of concatenation of Fpk and Tpk
+        // c = H(Fpk || Tpk)
+        keyV concat_FT;
+        concat_FT.reserve(4);
+
+        concat_FT.push_back(fromPk.mask);
+        concat_FT.push_back(toPk.mask);
+        concat_FT.push_back(s.Fpk);
+        concat_FT.push_back(s.Tpk);
+
+        key x = hash_to_scalar(concat_FT);
+
+        sc_muladd(s.zv.bytes, x.bytes, am.bytes, randamount.bytes);
+        sc_muladd(s.zf.bytes, x.bytes, fromSk.mask.bytes, randFromSk.mask.bytes);
+        sc_muladd(s.zt.bytes, x.bytes, toSk.mask.bytes, randToSk.mask.bytes);
+
+        return s;
+    }
+
+    bool verifyEqual(equalSig s, mcctkey fromPk, ctkey toPk){
+        keyV concat_FT;
+        concat_FT.reserve(4);
+        concat_FT.push_back(fromPk.mask);
+        concat_FT.push_back(toPk.mask);
+        concat_FT.push_back(s.Fpk);
+        concat_FT.push_back(s.Tpk);
+        key x = hash_to_scalar(concat_FT);
+
+        key xF = scalarmultKey(fromPk.mask, x);
+        key vC = scalarmultKey(fromPk.color, s.zv);
+        key fG = scalarmultBase(s.zf);
+        if(!equalKeys(addKeys(xF, s.Fpk), addKeys(vC,fG))){
+            LOG_PRINT_L1("verifyEqual: verify of ct equality failed in from");
+            return false;
+        }
+
+        key xT = scalarmultKey(toPk.mask, x);
+        key vH = scalarmultH(s.zv);
+        key tG = scalarmultBase(s.zt);
+        if(!equalKeys(addKeys(xT, s.Tpk), addKeys(vH,tG))){
+            LOG_PRINT_L1("verifyEqual: verify of ct equality failed in to");
+            return false;
+        }
+
+        return true;
+    }
+
     /**
      * A function proving that the outputs are equal to the temporary commitments
      * and transitively to the inputs.
@@ -354,8 +419,8 @@ namespace mcrct {
      */
     bool verMCRctSimple(const mcrctSig &rv, bool semantics){
         //TODO: try-catch ge_frombytes_vartime
-        CHECK_AND_ASSERT_MES(rv.type == RCTTypeSimple, false, "verMCRctSimple called on non RCTTypeSimple rctSig");
-        CHECK_AND_ASSERT_MES(rv.outPk.size() == rv.p.rangeSigs.size(), false, "Mismatched sizes of rv.outPk / rv.p.rangeSigs");
+        CHECK_AND_ASSERT_MES(rv.type == RCTTypeSimple || rv.type == RCTTypeBulletproof, false, "verMCRctSimple called on non RCTTypeSimple rctSig");
+        // CHECK_AND_ASSERT_MES(rv.outPk.size() == rv.p.rangeSigs.size(), false, "Mismatched sizes of rv.outPk / rv.p.rangeSigs");
         CHECK_AND_ASSERT_MES(rv.tmpPk.size() == rv.p.MGs.size(), false, "Mismatching sizes of rv.tmpPk / rv.p.MG");
         CHECK_AND_ASSERT_MES(rv.tmpPk.size() == rv.mixRing.size(), false, "Mismatched sizes of rv.tmpPk / rv.mixRing");
         CHECK_AND_ASSERT_MES(rv.p.colorsOutEqual.size() == 1, false, "rv.p.colorsOutEqual's size is not 1");
@@ -376,25 +441,45 @@ namespace mcrct {
         tools::threadpool::waiter waiter;
 
         // Verify rangeproofs
-        results.clear();
-        results.resize(rv.outPk.size());
-        for (size_t i = 0; i < rv.outPk.size(); i++) {
-            // create a thread for each verColoredRange call
-            tpool.submit(&waiter, [&, i]
-            {
-                results[i] = verColoredRange(rv.outPk[i].mask, rv.p.rangeSigs[i], rv.outPk[i].color);
-            });
-        }
-        // wait for each verColoredRange call to finish
-        waiter.wait(&tpool);
-        // check results
-        for (size_t i = 0; i < results.size(); i++) {
-            if (!results[i]) {
-                LOG_PRINT_L1("Colored range proof verified failed for output " << i);
-                return false;
+        if(rv.type == RCTTypeSimple) {
+            results.clear();
+            results.resize(rv.outPk.size());
+            for (size_t i = 0; i < rv.outPk.size(); i++) {
+                // create a thread for each verColoredRange call
+                tpool.submit(&waiter, [&, i] {
+                    results[i] = verColoredRange(rv.outPk[i].mask, rv.p.rangeSigs[i], rv.outPk[i].color);
+                });
+            }
+            // wait for each verColoredRange call to finish
+            waiter.wait(&tpool);
+            // check results
+            for (size_t i = 0; i < results.size(); i++) {
+                if (!results[i]) {
+                    LOG_PRINT_L1("Colored range proof verified failed for output " << i);
+                    return false;
+                }
             }
         }
+        else{
+            std::vector<const Bulletproof*> proofs;
+            for (size_t i = 0; i < rv.p.bulletproofs.size(); i++)
+                proofs.push_back(&rv.p.bulletproofs[i]);
 
+            if (!proofs.empty() && !verBulletproof(proofs))
+            {
+                LOG_PRINT_L1("Aggregate range proof verified failed");
+                return false;
+            }
+
+            for (size_t i = 0; i < rv.outPk.size(); i++){
+                if(!verifyEqual(rv.p.equalSigs[i], rv.outPk[i], rv.p.normPk[i])){
+                    LOG_PRINT_L1("Equal Proof failed for Pedersen Ct.");
+                    return false;
+                }
+
+            }
+
+        }
         // create matrix used to prove color
         keyM colorInc;
         colorInc.resize(rv.outPk.size());
@@ -756,7 +841,10 @@ namespace mcrct {
         CHECK_AND_ASSERT_THROW_MES(index.size() == amounts_in.size(), "Mismatched sizes of index / amounts_in");
 
         mcrctSig rv;
-        rv.type = RCTTypeSimple;
+        if(bulletproof)
+            rv.type = RCTTypeBulletproof;
+        else
+            rv.type = RCTTypeSimple;
         rv.message = message;
 
         // set txn fee using the native color
@@ -775,7 +863,11 @@ namespace mcrct {
 
         // prepare output sizes
         rv.outPk.resize(destinations.size());
+        rv.p.normPk.resize(destinations.size());
         rv.tmpPk.resize(inSk.size());
+        ctkeyV normSk;
+        normSk.resize(destinations.size());
+
 
         // create intermediate (tmp) commitments with same colors but different blinding factors
         mcctkeyV tmpSk;
@@ -796,7 +888,8 @@ namespace mcrct {
         // create outputs
 
         // range sigs and ecdh need double the size due to the addition of colors
-        rv.p.rangeSigs.resize(destinations.size());
+        if (!bulletproof)
+            rv.p.rangeSigs.resize(destinations.size());
         rv.ecdhInfo.resize(2 * destinations.size());
         rv.p.colorsOutEqual.resize(1); // single conservation prove
 
@@ -827,9 +920,10 @@ namespace mcrct {
 
 
             // range signatures
-            rv.p.rangeSigs[i] = proveColoredRange(rv.outPk[i].mask, outSk[i].mask,
-                    amounts_out[i], rv.outPk[i].color);
-
+            if (!bulletproof) {
+                rv.p.rangeSigs[i] = proveColoredRange(rv.outPk[i].mask, outSk[i].mask,
+                                                      amounts_out[i], rv.outPk[i].color);
+            }
             // create matrix used for color proof
             colorInc[i].resize(tmpSk.size());
             for (size_t inp = 0; inp < tmpSk.size(); inp++) {
@@ -853,6 +947,40 @@ namespace mcrct {
             rv.ecdhInfo[2 * i + 1].mask = copy(outSk[i].color);
             rv.ecdhInfo[2*i +1].amount = colors_out[i];
             hwdev.ecdhEncode(rv.ecdhInfo[2 * i + 1], amount_keys[i], false);
+        }
+
+        rv.p.bulletproofs.clear();
+        if (bulletproof)
+        {
+            rv.p.equalSigs.resize(destinations.size());
+            size_t n_amounts = amounts_out.size();
+            size_t amounts_proved = 0;
+            while (amounts_proved < n_amounts)
+            {
+                size_t batch_size = 1;
+                while (batch_size * 2 + amounts_proved <= n_amounts && batch_size * 2 <= BULLETPROOF_MAX_OUTPUTS)
+                    batch_size *= 2;
+                rct::keyV C, masks;
+                std::vector<uint64_t> batch_amounts(batch_size);
+                for (size_t i = 0; i < batch_size; ++i) {
+                    batch_amounts[i] = amounts_out[i + amounts_proved];
+                }
+                const epee::span<const key> keys{&amount_keys[amounts_proved], batch_size};
+                rv.p.bulletproofs.push_back(proveRangeBulletproof(C, masks, batch_amounts, keys, hwdev));
+#ifdef DBG
+                CHECK_AND_ASSERT_THROW_MES(verBulletproof(rv.p.bulletproofs.back()), "verBulletproof failed on newly created proof");
+#endif
+                for (size_t i = 0; i < batch_size; ++i)
+                {
+                    rv.p.normPk[i + amounts_proved].mask = rct::scalarmult8(C[i]);
+                    normSk[i + amounts_proved].mask = masks[i];
+
+                    rv.p.equalSigs[i + amounts_proved] = proveEqual(rv.outPk[i + amounts_proved], rv.p.normPk[i + amounts_proved],
+                                                                    amounts_out[i + amounts_proved], outSk[i + amounts_proved],
+                                                                    normSk[i + amounts_proved]);
+                }
+                amounts_proved += batch_size;
+            }
         }
 
         // proof of Color using matrix and vectors created above

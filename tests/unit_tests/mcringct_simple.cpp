@@ -126,6 +126,24 @@ TEST(mcringtct_simple, proveMCRctMGSimple){
     ASSERT_TRUE(res);
 }
 
+TEST(mcringtct_simple, proveEqual) {
+    xmr_amount am = 5;
+    key pregreen = {1,2,3,4,5,6,7,8,1,2,3,4,5,6,7,8,1,2,3,4,5,6,7,8,1,2,3,4,5,6,7,9};
+    key green = hashToPoint(scalarmultBase(pregreen));
+
+    mcctkey colSk;
+    mcctkey colPk;
+    tie(colSk, colPk) = mcctskpkGen(am, green);
+
+    ctkey pedSk, pedPk;
+    tie(pedSk, pedPk) = ctskpkGen(am);
+
+    equalSig s = proveEqual(colPk, pedPk, am, colSk, pedSk);
+
+    bool res = verifyEqual(s, colPk, pedPk);
+    ASSERT_TRUE(res);
+}
+
 TEST(mcringtct_simple, proveConservation) {
     mcctkeyV inSk, outSk, outPk;
     mcctkeyM mixRing;
@@ -298,7 +316,7 @@ TEST(mcringct_simple, genMCRctSimple){
     auto time_before = chrono::high_resolution_clock::now();
 
     auto mcrctsig = genMCRctSimple(msg, inSk, destinations, amounts_in, colors_in, amounts_out, colors_out,
-                                   mixRing, amount_keys, NULL, NULL, index, outSk, false,
+                                   mixRing, amount_keys, NULL, NULL, index, outSk, true,
                                    hw::get_device("default"));
 
     auto time_after = chrono::high_resolution_clock::now();
@@ -323,75 +341,86 @@ TEST(mcringct_simple, genMCRctSimpleTime){
     key preGreen = {1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 9};
     key green = hashToPoint(scalarmultBase(preGreen));
 
-    key notGreen;
-    subKeys(notGreen, green, green);
-    subKeys(notGreen, notGreen, green);
+    for(int noin=1; noin<19; noin++) {
+        for (int noout = 1; noout < 19; noout++) {
 
-    vector<xmr_amount> amounts_in({1, 2, 3});
-    vector<key> colors_in;
-    colors_in.push_back(native);
-    colors_in.push_back(native);
-    colors_in.push_back(green);
+            vector<xmr_amount> amounts_in;
+            vector<key> colors_in;
 
-    vector<xmr_amount> amounts_out({1, 2, 3});
-    vector<key> colors_out;
-    colors_out.push_back(green);
-    colors_out.push_back(green);
-    colors_out.push_back(native);
+            amounts_in.resize(noin);
+            int allin = 0;
+            for(int i =0; i< noin; i++){
+                amounts_in[i]=i+100;
+                allin += i+100;
+                colors_in.push_back(green);
+                // cout << "in " << i << " : " << amounts_in[i] << endl;
+            }
 
-    vector<unsigned int> index;
-    index.resize(amounts_in.size());
-    for (size_t i = 0; i < index.size(); i++) {
-        // TODO: should use different indexes; irrelevant for testing
-        index[i] = 1;
+            vector<xmr_amount> amounts_out;
+            vector<key> colors_out;
+            amounts_out.resize(noout);
+            int allout = 0;
+            for(int i = 0; i < (noout-1); i++){
+                amounts_out[i]=1;
+                allout += 1;
+                colors_out.push_back(green);
+                // cout << "out " << i << " : " << amounts_out[i] << endl;
+            }
+            amounts_out[noout-1] = allin-allout;
+            colors_out.push_back(green);
+
+            vector<unsigned int> index;
+            index.resize(amounts_in.size());
+            for (size_t i = 0; i < index.size(); i++) {
+                // TODO: should use different indexes; irrelevant for testing
+                index[i] = 1;
+            }
+
+            // edit here to specify times to run generation and verification
+            int iterations = 30;
+
+            auto time_gen_max = 0;
+            auto time_gen_min = std::numeric_limits<unsigned long>::max();
+            auto time_gen_total = 0;
+            auto time_ver_max = 0;
+            auto time_ver_min = std::numeric_limits<unsigned long>::max();
+            auto time_ver_total = 0;
+
+            for (int i = 0; i < iterations; i++) {
+
+                tie(inSk, mixRing, outSk, outPk) = generate_test_transaction_keys(amounts_in, colors_in, 10,
+                                                                                  index, amounts_out, colors_out);
+
+                key msg = skGen();
+                keyV destinations = to_dest_keyV(outPk);
+                keyV amount_keys = to_dest_keyV(outSk);
+
+                auto time_before_gen = chrono::high_resolution_clock::now();
+                auto mcrctsig = genMCRctSimple(msg, inSk, destinations, amounts_in, colors_in, amounts_out, colors_out,
+                                               mixRing, amount_keys, NULL, NULL, index, outSk, true,
+                                               hw::get_device("default"));
+                auto time_after_gen = chrono::high_resolution_clock::now();
+                auto diff_gen = chrono::duration_cast<std::chrono::microseconds>(
+                        time_after_gen - time_before_gen).count();
+                time_gen_max = time_gen_max < diff_gen ? diff_gen : time_gen_max;
+                time_gen_min = time_gen_min > diff_gen ? diff_gen : time_gen_min;
+                time_gen_total += diff_gen;
+
+
+                auto time_before_ver = chrono::high_resolution_clock::now();
+                bool res = verMCRctSimple(mcrctsig, false);
+                if (!res) cerr << "Failed to verify";
+                auto time_after_ver = chrono::high_resolution_clock::now();
+                auto diff_ver = chrono::duration_cast<std::chrono::microseconds>(
+                        time_after_ver - time_before_ver).count();
+                time_ver_max = time_ver_max < diff_ver ? diff_ver : time_ver_max;
+                time_ver_min = time_ver_min > diff_ver ? diff_ver : time_ver_min;
+                time_ver_total += diff_ver;
+
+                cout << "in: " << noin << " out: " << noout << " gen: " << diff_gen << " ver: " << diff_ver << endl;
+            }
+        }
     }
-
-    // edit here to specify times to run generation and verification
-    int iterations = 10;
-
-    auto time_gen_max = 0;
-    auto time_gen_min = std::numeric_limits<unsigned long>::max();
-    auto time_gen_total = 0;
-    auto time_ver_max = 0;
-    auto time_ver_min = std::numeric_limits<unsigned long>::max();
-    auto time_ver_total = 0;
-
-    for(int i = 0; i < iterations; i++) {
-
-        tie(inSk, mixRing, outSk, outPk) = generate_test_transaction_keys(amounts_in, colors_in, 10,
-                                                                          index, amounts_out, colors_out);
-
-        key msg = skGen();
-        keyV destinations = to_dest_keyV(outPk);
-        keyV amount_keys = to_dest_keyV(outSk);
-
-        auto time_before_gen = chrono::high_resolution_clock::now();
-        auto mcrctsig = genMCRctSimple(msg, inSk, destinations, amounts_in, colors_in, amounts_out, colors_out,
-                                       mixRing, amount_keys, NULL, NULL, index, outSk, false,
-                                       hw::get_device("default"));
-        auto time_after_gen = chrono::high_resolution_clock::now();
-        auto diff_gen = chrono::duration_cast<std::chrono::microseconds>(time_after_gen - time_before_gen).count();
-        time_gen_max = time_gen_max < diff_gen ? diff_gen : time_gen_max;
-        time_gen_min = time_gen_min > diff_gen ? diff_gen : time_gen_min;
-        time_gen_total += diff_gen;
-
-
-        auto time_before_ver = chrono::high_resolution_clock::now();
-        bool res = verMCRctSimple(mcrctsig, false);
-        if (!res) cerr << "Failed to verify";
-        auto time_after_ver = chrono::high_resolution_clock::now();
-        auto diff_ver = chrono::duration_cast<std::chrono::microseconds>(time_after_ver - time_before_ver).count();
-        time_ver_max = time_ver_max < diff_ver ? diff_ver : time_ver_max;
-        time_ver_min = time_ver_min > diff_ver ? diff_ver : time_ver_min;
-        time_ver_total += diff_ver;
-    }
-    cout << "gen_min: " << time_gen_min << "micros" << endl;
-    cout << "gen_max: " << time_gen_max << "micros" << endl;
-    cout << "gen_mean: " << (time_gen_total / 1000) << "micros" << endl;
-
-    cout << "ver_min: " << time_ver_min << "micros" << endl;
-    cout << "ver_max: " << time_ver_max << "micros" << endl;
-    cout << "ver_mean: " << (time_ver_total / 1000) << "micros" << endl;
 
 }
 static tuple<ctkeyV, ctkeyM, ctkeyV, ctkeyV> generate_test_rct_transaction_keys (
@@ -436,65 +465,88 @@ static keyV to_rct_dest_keyV(ctkeyV _ctkeys) {
     return tmp;
 }
 
-/*TEST(mcringct_simple, genRctSimple){
+TEST(mcringct_simple, genRctSimple){
     ctkeyV inSk, outSk, outPk;
     ctkeyM mixRing;
 
 
-    vector<xmr_amount> amounts_in({1, 2, 3});
+    for(int noin=1; noin<19; noin++) {
+        for(int noout=1; noout<19; noout++) {
 
-    vector<xmr_amount> amounts_out({1, 2, 3});
+            vector<xmr_amount> amounts_in;
+            amounts_in.resize(noin);
+            int allin = 0;
+            for(int i =0; i< noin; i++){
+                amounts_in[i]=i+100;
+                allin += i+100;
+                // cout << "in " << i << " : " << amounts_in[i] << endl;
+            }
 
-    vector<unsigned int> index;
-    index.resize(amounts_in.size());
-    for (size_t i = 0; i < index.size(); i++) {
-        // TODO: should use different indexes; irrelevant for testing
-        index[i] = 1;
+            vector<xmr_amount> amounts_out;
+            amounts_out.resize(noout);
+            int allout = 0;
+            for(int i = 0; i < (noout-1); i++){
+                amounts_out[i]=1;
+                allout += 1;
+                // cout << "out " << i << " : " << amounts_out[i] << endl;
+            }
+            amounts_out[noout-1] = allin-allout;
+            // cout << "out " << noout-1 << " : " << amounts_out[noout-1] << endl;
+
+            vector<unsigned int> index;
+            index.resize(amounts_in.size());
+            for (size_t i = 0; i < index.size(); i++) {
+                // TODO: should use different indexes; irrelevant for testing
+                index[i] = 1;
+            }
+            // edit here to specify times to run generation and verification
+            int iterations = 30;
+
+            auto time_gen_max = 0;
+            auto time_gen_min = std::numeric_limits<unsigned long>::max();
+            auto time_gen_total = 0;
+            auto time_ver_max = 0;
+            auto time_ver_min = std::numeric_limits<unsigned long>::max();
+            auto time_ver_total = 0;
+
+            for (int i = 0; i < iterations; i++) {
+
+                tie(inSk, mixRing, outSk, outPk) = generate_test_rct_transaction_keys(amounts_in, 10,
+                                                                                      index, amounts_out);
+
+                key msg = skGen();
+                keyV destinations = to_rct_dest_keyV(outPk);
+                keyV amount_keys = to_rct_dest_keyV(outSk);
+
+                RCTConfig rct_config;
+                //rct_config.range_proof_type = RangeProofBorromean;
+                rct_config.range_proof_type = RangeProofMultiOutputBulletproof;
+
+                auto time_before_gen = chrono::high_resolution_clock::now();
+                rctSig sig = genRctSimple(msg, inSk, destinations, amounts_in, amounts_out, 0, mixRing, amount_keys,
+                                          NULL, NULL, index, outSk, rct_config, hw::get_device("default"));
+                //msg, inSk, destinations, amounts_in, amounts_out, 0, mixRing, amount_keys,
+                //NULL, NULL, index, outSk, false, hw::get_device("default"));
+                auto time_after_gen = chrono::high_resolution_clock::now();
+                auto diff_gen = chrono::duration_cast<std::chrono::microseconds>(
+                        time_after_gen - time_before_gen).count();
+                time_gen_max = time_gen_max < diff_gen ? diff_gen : time_gen_max;
+                time_gen_min = time_gen_min > diff_gen ? diff_gen : time_gen_min;
+                time_gen_total += diff_gen;
+
+
+                auto time_before_ver = chrono::high_resolution_clock::now();
+                bool res = verRctSimple(sig);
+                if (!res) std::cerr << "Failed to verify" << std::endl;
+                auto time_after_ver = chrono::high_resolution_clock::now();
+                auto diff_ver = chrono::duration_cast<std::chrono::microseconds>(
+                        time_after_ver - time_before_ver).count();
+                time_ver_max = time_ver_max < diff_ver ? diff_ver : time_ver_max;
+                time_ver_min = time_ver_min > diff_ver ? diff_ver : time_ver_min;
+                time_ver_total += diff_ver;
+
+                cout << "in: " << noin << " out: " << noout << " gen: " << diff_gen << " ver: " << diff_ver << endl;
+            }
+        }
     }
-    // edit here to specify times to run generation and verification
-    int iterations = 1000;
-
-    auto time_gen_max = 0;
-    auto time_gen_min = std::numeric_limits<unsigned long>::max();
-    auto time_gen_total = 0;
-    auto time_ver_max = 0;
-    auto time_ver_min = std::numeric_limits<unsigned long>::max();
-    auto time_ver_total = 0;
-
-    for (int i = 0; i < iterations; i++) {
-
-        tie(inSk, mixRing, outSk, outPk) = generate_test_rct_transaction_keys(amounts_in, 10,
-                                                                              index, amounts_out);
-
-        key msg = skGen();
-        keyV destinations = to_rct_dest_keyV(outPk);
-        keyV amount_keys = to_rct_dest_keyV(outSk);
-
-        auto time_before_gen = chrono::high_resolution_clock::now();
-        rctSig sig = genRctSimple(msg, inSk, destinations, amounts_in, amounts_out, 0, mixRing, amount_keys,
-                NULL, NULL, index, outSk, false, hw::get_device("default"));
-        auto time_after_gen = chrono::high_resolution_clock::now();
-        auto diff_gen = chrono::duration_cast<std::chrono::microseconds>(time_after_gen - time_before_gen).count();
-        time_gen_max = time_gen_max < diff_gen ? diff_gen : time_gen_max;
-        time_gen_min = time_gen_min > diff_gen ? diff_gen : time_gen_min;
-        time_gen_total += diff_gen;
-
-
-        auto time_before_ver = chrono::high_resolution_clock::now();
-        bool res = verRctSimple(sig, false);
-        if(!res) std::cerr << "Failed to verify" << std::endl;
-        auto time_after_ver = chrono::high_resolution_clock::now();
-        auto diff_ver = chrono::duration_cast<std::chrono::microseconds>(time_after_ver - time_before_ver).count();
-        time_ver_max = time_ver_max < diff_ver ? diff_ver : time_ver_max;
-        time_ver_min = time_ver_min > diff_ver ? diff_ver : time_ver_min;
-        time_ver_total += diff_ver;
-    }
-
-    cout << "gen_min: " << time_gen_min << "micros" << endl;
-    cout << "gen_max: " << time_gen_max << "micros" << endl;
-    cout << "gen_mean: " << (time_gen_total / 1000) << "micros" << endl;
-
-    cout << "ver_min: " << time_ver_min << "micros" << endl;
-    cout << "ver_max: " << time_ver_max << "micros" << endl;
-    cout << "ver_mean: " << (time_ver_total / 1000) << "micros" << endl;
-}*/
+}

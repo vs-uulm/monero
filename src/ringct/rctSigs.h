@@ -64,6 +64,8 @@ namespace hw {
 
 
 namespace rct {
+    Bulletproof proveRangeBulletproof(keyV &C, keyV &masks, const std::vector<uint64_t> &amounts, epee::span<const key> sk, hw::device &hwdev);
+    bool verBulletproof(const std::vector<const Bulletproof*> &proofs);
 
     boroSig genBorromean(const key64 x, const key64 P1, const key64 P2, const bits indices);
     bool verifyBorromean(const boroSig &bb, const key64 P1, const key64 P2);
